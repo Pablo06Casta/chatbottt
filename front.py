@@ -1,7 +1,24 @@
 import streamlit as st
 from chatbot import predict_class, get_response
 
+st.sidebar.title("Opciones")
 
+# Definir los enlaces a las páginas web en un desplegable
+selected_option = st.sidebar.selectbox(
+    "Selecciona una opción:",
+    ["Google", "OpenAI", "GitHub"]
+)
+
+# Diccionario de enlaces a las páginas web
+options = {
+    "Google": "https://www.google.com",
+    "OpenAI": "https://www.openai.com",
+    "GitHub": "https://www.github.com"
+}
+
+# Redirigir al usuario cuando seleccione una opción
+if selected_option in options:
+    st.sidebar.markdown(f"Redireccionando a [{selected_option}]({options[selected_option]})")
 
 
 st.title("Asistente Virtual")
@@ -38,3 +55,4 @@ if prompt := st.chat_input("¿Cómo puedo ayudarte?"):
     with st.chat_message("assistant"):
         st.markdown(res)
         st.session_state.messages.append({"role": "assistant", "content": res})
+
