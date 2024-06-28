@@ -1,98 +1,75 @@
+import streamlit as st
+import random
 import json
 import pickle
 import numpy as np
-import random
 import nltk
 from nltk.stem import WordNetLemmatizer
-from keras.models import Sequential
-from keras.layers import Dense, Dropout
-from keras.optimizers import SGD
+from keras.models import load_model # type: ignore
 
-# Asegúrate de que nltk está descargado correctamente
-nltk.download('punkt')
-nltk.download('wordnet')
+# Cargar los datos necesarios (intents, words, classes, model)
+lemmatizer = WordNetLemmatizer()
+intents = json.loads(open('intents_spanish.json').read())
+words = pickle.load(open('words.pkl', 'rb'))
+classes = pickle.load(open('classes.pkl', 'rb'))
+model = load_model('chatbot_model.h5')
 
-# Cargar el archivo JSON
-with open('intents_spanish.json', 'r', encoding='utf-8') as file:
-    intents = json.load(file)
+# Funciones para el procesamiento del texto
+def clean_up_sentence(sentence):
+    """Tokeniza y lematiza una oración."""
+    sentence_words = nltk.word_tokenize(sentence)
+    sentence_words = [lemmatizer.lemmatize(word.lower()) for word in sentence_words]
+    return sentence_words
 
-# Definir funciones para cargar y preparar datos
-def load_and_prepare_data():
-    words = []
-    classes = []
-    documents = []
-    ignore_words = ['?', '!']
-    lemmatizer = WordNetLemmatizer()
+def bag_of_words(sentence, words, show_details=True):
+    """Convierte una oración en una bolsa de palabras."""
+    sentence_words = clean_up_sentence(sentence)
+    bag = [0] * len(words)
+    for w in sentence_words:
+        for i, word in enumerate(words):
+            if word == w:
+                bag[i] = 1
+                if show_details:
+                    print(f"Found in bag: {word}")
+    return np.array(bag)
 
-    for intent in intents['intents']:
-        for pattern in intent['patterns']:
-            word_list = nltk.word_tokenize(pattern)
-            words.extend(word_list)
-            documents.append((word_list, intent['tag']))
-            if intent['tag'] not in classes:
-                classes.append(intent['tag'])
+# Función para predecir la intención del usuario
+def predict_class(sentence):
+    """Predice la intención de la oración del usuario."""
+    bow = bag_of_words(sentence, words, show_details=False)
+    res = model.predict(np.array([bow]))[0]
+    ERROR_THRESHOLD = 0.25
+    results = [[i, r] for i, r in enumerate(res) if r > ERROR_THRESHOLD]
+    results.sort(key=lambda x: x[1], reverse=True)
+    return_list = []
+    for r in results:
+        return_list.append({'intent': classes[r[0]], 'probability': str(r[1])})
+    return return_list
 
-    words = [lemmatizer.lemmatize(w.lower()) for w in words if w not in ignore_words]
-    words = sorted(set(words))
-    classes = sorted(set(classes))
+# Función para obtener la respuesta del chatbot
+def get_response(intents_list):
+    """Genera una respuesta basada en la intención predecida."""
+    tag = intents_list[0]['intent']
+    list_of_intents = intents['intents']
+    for intent in list_of_intents:
+        if intent['tag'] == tag:
+            response = random.choice(intent['responses'])
+            break
+    else:
+        response = "No entendí tu pregunta, ¿podrías ser más específico?"
+    return response
 
-    pickle.dump(words, open('words.pkl', 'wb'))
-    pickle.dump(classes, open('classes.pkl', 'wb'))
+# Configuración de Streamlit para la interfaz de usuario
+st.title("Chatbot")
+st.write("¡Hola! Soy un chatbot. ¿En qué puedo ayudarte?")
 
-    training = []
-    output_empty = [0] * len(classes)
+# Entrada de texto del usuario
+user_input = st.text_input("Tú: ", "")
 
-    for doc in documents:
-        bag = []
-        word_patterns = doc[0]
-        word_patterns = [lemmatizer.lemmatize(word.lower()) for word in word_patterns]
-        for word in words:
-            bag.append(1) if word in word_patterns else bag.append(0)
-        output_row = list(output_empty)
-        output_row[classes.index(doc[1])] = 1
-        training.append([bag, output_row])
-
-    random.shuffle(training)
-    training = np.array(training, dtype=object)
-
-    train_x = np.array(list(training[:, 0]))
-    train_y = np.array(list(training[:, 1]))
-
-    return train_x, train_y, words, classes
-
-# Función para reentrenar el modelo
-def retrain_model():
-    train_x, train_y, words, classes = load_and_prepare_data()
-
-    model = Sequential()
-    model.add(Dense(128, input_shape=(len(train_x[0]),), activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(64, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(len(train_y[0]), activation='softmax'))
-
-    sgd = SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
-    model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
-
-    model.fit(train_x, train_y, epochs=200, batch_size=5, verbose=1)
-    model.save('chatbot_model.h5')
-
-    print("Model retrained")
-
-# Código principal para la creación del modelo inicial
-train_x, train_y, words, classes = load_and_prepare_data()
-
-model = Sequential()
-model.add(Dense(128, input_shape=(len(train_x[0]),), activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(64, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(len(train_y[0]), activation='softmax'))
-
-sgd = SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
-model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
-
-hist = model.fit(train_x, train_y, epochs=200, batch_size=5, verbose=1)
-model.save('chatbot_model.h5', hist)
-
-print("Model created")
+if user_input:
+    # Predice la intención de la entrada del usuario
+    predicted_intents = predict_class(user_input)
+    # Genera la respuesta del chatbot
+    response = get_response(predicted_intents)
+    # Muestra la respuesta del chatbot
+    st.text_area("Chatbot: ", value=response, height=200, max_chars=None, key=None)
